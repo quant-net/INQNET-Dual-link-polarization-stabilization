@@ -26,9 +26,9 @@ class PSOParams:
     def __init__(self, Alice, Bob, Charlie, Measure_CostFunction, log_event, log_file, meas_device):
         self.num_particles = 20
         self.max_iter = 20
-        self.threshold_cost1 = 0.025
-        self.threshold_cost2 = 0.01
-        self.threshold_cost_Alice = 0.04
+        self.threshold_cost1 = 0.01#0.01#0.045#
+        self.threshold_cost2 = 0.03#0.01#
+        self.threshold_cost_Alice = 0.045
         self.channels12 = [1, 2]
         self.channels34 = [3, 4]
         self.Measure_CostFunction = Measure_CostFunction  # Assigning function
@@ -202,8 +202,8 @@ class Step:
             self.threshold_cost1 = pso_params.threshold_cost1
             self.threshold_cost2 = pso_params.threshold_cost2
             self.threshold_cost_Alice = pso_params.threshold_cost_Alice
-            self.channels12 = [1, 2]
-            self.channels34 = [3, 4]
+            self.channels12 = pso_params.channels12
+            self.channels34 = pso_params.channels34
             self.Measure_CostFunction = pso_params.Measure_CostFunction
             self.log_file = pso_params.log_file
             self.log_event = pso_params.log_event
@@ -212,13 +212,15 @@ class Step:
         else:
             raise ValueError(f"pso_params was passed as {type(pso_params)}, accepted types are dict and PSOParams only")
         
-        self.best_voltage = None
-        self.visibility = None
+        self.best_voltage = np.array([0,0,0])
+        self.visibility = -1
         self.pso = None
 
-        self.H1_visibility = None
-        self.D2_visibility = None
-        self.H2_visibility = None
+        self.H1_visibility = -1
+        self.D2_visibility = -1
+        self.H2_visibility = -1
+
+        self.best_voltage = np.array([0,0,0])
     
     def setup_PSOManager(self, threshold_cost):
         """Sets up a PSOManager object"""
@@ -261,6 +263,13 @@ class Bob_H1_Stabilization(Step):
             controller=self.Charlie.Pol_CTRL1,
             voltage=self.best_voltage
         )
+                
+        self.Bob_all_visibilities = calculate_user_visibilities(
+            user=self.Bob,
+            device=self.meas_device,
+            channels=self.channels12,
+            log_file=self.log_file
+        )
         
         # Bob_visibilities_dict[f"Run {i}, Step 1: (Avg) Bob H"] = Bob_H_avg_visibility
         self.log_event(self.log_file, f"Bob H1 visibility: {Bob_H1_avg_visibility}")
@@ -302,7 +311,7 @@ class Bob_H1_Stabilization(Step):
 
         for _ in range(5):
             # Optimize Charlie Pol_CTRL1 to find best PSO voltage and cost
-            self.best_voltage, self.best_cost, self.success = pso.optimize_polarization(
+            self.best_voltage, self.visibility, self.success = pso.optimize_polarization(
                 user=self.Bob,
                 pol=self.Bob.PSG.H,
                 channels=self.channels12,
@@ -324,6 +333,7 @@ class Bob_D2_Stabilization(Step):
         """Checks the current visibility or polarization stability for Bob D2"""
         self.log_event(self.log_file, "Setting D polarization from Bob's PSG")
         self.Bob.PSG.polSET(self.Bob.PSG.D)
+        # self.Bob.PSG.polSET(self.Bob.PSG.H)
 
         _ = OSW_operate(
             self.Charlie.OSW,
@@ -342,6 +352,13 @@ class Bob_D2_Stabilization(Step):
             log_file=self.log_file,
             controller=self.Charlie.Pol_CTRL2,
             voltage=self.best_voltage
+        )
+        
+        self.Bob_all_visibilities = calculate_user_visibilities(
+            user=self.Bob,
+            device=self.meas_device,
+            channels=self.channels34,
+            log_file=self.log_file
         )
         
         self.log_event(self.log_file, f"Bob D2 visibility: {Bob_D2_avg_visibility}")
@@ -379,7 +396,7 @@ class Bob_D2_Stabilization(Step):
 
         for _ in range(5):
             # Optimize Charlie Pol_CTRL2 to find best PSO voltage and cost
-            self.best_voltage, self.best_cost, self.success = pso.optimize_polarization(
+            self.best_voltage, self.visibility, self.success = pso.optimize_polarization(
                 user=self.Bob,
                 pol=self.Bob.PSG.D,
                 channels=self.channels34,
@@ -572,7 +589,7 @@ class Alice_H1D2_Stabilization(Step):
             )
 
             # Optimize Charlie Pol_CTRL1 to find best PSO voltage and cost
-            self.best_voltage, self.best_cost, self.success = pso.optimize_polarization(
+            self.best_voltage, self.visibility, self.success = pso.optimize_polarization(
                 user=self.Alice,
                 pol=self.Alice.PSG.H,
                 channels=self.channels12,
@@ -588,6 +605,7 @@ class Alice_H1D2_Stabilization(Step):
                         f"Alice {key} visibility: {self.Alice_all_visibilities[key]}")
 
             # Revalidate Step 1 and Step 2
+
             step1.check()
             step2.check()
 
@@ -674,7 +692,7 @@ class Bob_H2_Stabilization(Step):
 
         for _ in range(5):
             # Optimize Charlie Pol_CTRL1 to find best PSO voltage and cost
-            self.best_voltage, self.best_cost, self.success = pso.optimize_polarization(
+            self.best_voltage, self.visibility, self.success = pso.optimize_polarization(
                 user=self.Bob,
                 pol=self.Bob.PSG.H,
                 channels=self.channels34,
@@ -692,7 +710,8 @@ class Bob_H2_Stabilization(Step):
         self.log_event(self.log_file, f"{self.name} Completed Successfully")
 
 class PolarizationStabilization:
-    def __init__(self, pso_params, duration, tracking_interval=30, visTolPercent=0.015):
+    def __init__(self, pso_params, duration,
+                 tracking_interval=30, visTolPercent=0.015):
 
         self.step1 = Bob_H1_Stabilization("Step 1", pso_params)
         self.step2 = Bob_D2_Stabilization("Step 2", pso_params)
@@ -706,68 +725,243 @@ class PolarizationStabilization:
 
         self.tracking_check_interval = tracking_interval
         self.visTolPercent = visTolPercent
+
+        self.SLEEP_TIME_H = 1*60
+        self.SLEEP_TIME_D = 5*60
+
+        # Approximate amount of time it takes for initial stabilization to run
+        # TODO Please verify on your machine! (although not entirely necessary to do so)
+        # INIT_TIME = 5 * 60
+
+        # Structure of tracking data
+        # Row 0: Time (in seconds)
+        # Row 1: Bob   H1
+        # Row 2: Bob   D2
+        # Row 3: Bob   H2
+        # Row 4: Alice H1
+        # Row 5: Alice D2
+        # Row 6: Alice H2
+
+        self.tracking_data = -np.ones([7, int(2 * duration/tracking_interval)])
+        self.cleaned_tracking_data = None
     
     def initial_stabilization(self):
         # NOTE Step.run() does not check whether self.failed_badly is True or False when self.success = False,
         # only Step.check() does this
         self.log_event(self.log_file, "Running Initial Stabilization...")
+        # for _ in range(5):
         self.step1.run()
+        # self.step1.check()
         self.step2.run()
+        # self.step2.check()
         self.step3.run(self.step1, self.step2)
+        # self.step3.check_H1D2()
         self.step4.run()
+        # self.step4.check()
         self.log_event(self.log_file, "Initial Stabilization Completed")
 
-    def stabilization_tracking(self):
+    def stabilization_tracking(self, init=True):
         ticPS = time.perf_counter()
-        self.initial_stabilization()
+        if init:
+            self.initial_stabilization()
         self.log_event(self.log_file, "Running Stabilization Tracking...")
         tocPS = time.perf_counter()
         time_elapsed = tocPS - ticPS
+        tic_H_tracking = time.perf_counter()
+        tic_D_tracking = time.perf_counter()
+        tracking_iter = 0
+        
         while time_elapsed < self.duration:
-            # Check if steps 1, 3, and 4 are still valid
-            self.step1.check() # Bob H1
-            self.step3.check_H1H2() # Alice H1 and H2
-            self.step4.check() # Bob H2
-            
-            # Ensure Steps 1 & 2 complete successfully
-            if self.step1.success and self.step3.success and self.step4.success:
-                self.log_event(self.log_file, "All visibilities are below their respective thresholds"
-                                + "\nStabilization is good for now!")
-                
-            elif ((not self.step3.H1_success and not self.step3.H2_success)
-                  and (self.step1.success and self.step4.success)): # Alice failed and Bob did not
-                # if not self.step3.H1_failed_badly and not self.step3.H2_failed_badly: # Alice H1 and H2 are still within visTolPercent of threshold_cost
-                #     self.step3.run(self.step1, self.step2)
-                # else:
-                self.initial_stabilization()
-            elif ((self.step3.H1_success and self.step3.H2_success)
-                  and (not self.step1.success and not self.step4.success)): # Bob failed and Alice did not
-                # if not self.step1.failed_badly and not self.step4.failed_badly: # Bob H1 and H2 are still within visTolPercent of threshold_cost
-                #     self.step1.run()
-                #     self.step4.run()
-                # else: # If Bob H1 or H2 failed badly
-                self.initial_stabilization()
-
-            elif ((not self.step3.H1_success and not self.step1.success)
-                    and (self.step3.H2_success and self.step4.success)): # H1 failed for both, H2 is fine for both
-                self.step1.run()
-            elif ((self.step3.H1_success and self.step1.success)
-                    and (not self.step3.H2_success and not self.step4.success)): # H2 failed for both, H1 is fine for both
-                self.step4.run()
-
-            else:
-                self.initial_stabilization()
-
+            self.log_event(self.log_file, f"Stabilization Tracking Loop Iteration {tracking_iter}")
+            # Wait for a specificed period of time
             time.sleep(self.tracking_check_interval)
+
+            # Check H stability
+            if (time.perf_counter() - tic_H_tracking) >= self.SLEEP_TIME_H: # Add this as a separate method
+                self.log_event(self.log_file, "Tracking H polarization stabilization...")
+
+                self.step1.check() # Bob H1
+                while not self.step1.success:
+                    self.log_event(self.log_file, "Step 1: Failed, rerunning Step 1...")
+                    self.step1.run()
+                self.log_event(self.log_file, "Step 1: Valid")
+            
+                self.step4.check() # Bob H2
+                while not self.step4.success:
+                    self.log_event(self.log_file, "Step 4: Failed, rerunning Step 4...")
+                    self.step4.run()
+                self.log_event(self.log_file, "Step 4: Valid")
+
+                self.step3.check_H1H2() # Alice H1 and H2
+                while not self.step3.H1_success or not self.step3.H2_success:
+                    self.log_event(self.log_file, "Step 3: Failed, rerunning Step 3...")
+                    # self.step1.check()
+                    # self.step2.check()
+                    self.step3.run(self.step1, self.step2)
+                self.log_event(self.log_file, "Step 3: Valid")
+                
+                # Recheck if all are still valid
+                self.log_event(self.log_file, "Rechecking H polarization steps...")
+                # self.step1.check()
+                # self.step4.check()
+                # self.step3.check()
+                if (not self.step1.success or not self.step3.H1_success
+                    or not self.step3.H2_success or not self.step4.success):
+                    self.log_event(self.log_file, "One or more steps failed after checks, rerunning initial stabilization")
+                    self.initial_stabilization()
+                else:
+                    self.log_event(self.log_file, "All visibilities are below their respective thresholds"
+                                    + "\nStabilization is good for now!")
+                
+                tic_H_tracking = time.perf_counter()
+
+            """     # self.step1.check() # Bob H1
+
+                # while not self.step1.success:
+                #     self.step1.run()
+                
+                # self.step4.check() # Bob H2
+                # while not self.step4.success:
+                #     self.step4.run()
+                
+                # self.step3.check_H1H2() # Alice H1 and H2
+                # while not self.step3.H1_success:
+                #     # self.step1.check()
+                #     # if not self.step1.success:
+                #     #     self.step1.run()
+                #     self.step3.check_H1H2()
+
+                # while not self.step3.H1_success and self.step1.success:
+                #     self.step2.check()
+                #     self.step3.run(self.step1, self.step2)
+                #     self.step4.check()
+                #     if not self.step4.success:
+                #         self.step4.run()
+
+                #     if not self.step2.success:
+                #         self.step2.run()
+                #     self.step3.run(self.step1, self.step2)
+            
+            # # Ensure Steps 1 & 2 complete successfully
+            # if self.step1.success and self.step3.success and self.step4.success:
+            #     self.log_event(self.log_file, "All visibilities are below their respective thresholds"
+            #                     + "\nStabilization is good for now!")
+                
+            # elif ((not self.step3.H1_success and not self.step3.H2_success)
+            #       and (self.step1.success and self.step4.success)): # Alice failed and Bob did not
+            #     # if not self.step3.H1_failed_badly and not self.step3.H2_failed_badly: # Alice H1 and H2 are still within visTolPercent of threshold_cost
+            #     #     self.step3.run(self.step1, self.step2)
+            #     # else:
+            #     self.initial_stabilization()
+            # elif ((self.step3.H1_success and self.step3.H2_success)
+            #       and (not self.step1.success and not self.step4.success)): # Bob failed and Alice did not
+            #     # if not self.step1.failed_badly and not self.step4.failed_badly: # Bob H1 and H2 are still within visTolPercent of threshold_cost
+            #     #     self.step1.run()
+            #     #     self.step4.run()
+            #     # else: # If Bob H1 or H2 failed badly
+            #     self.initial_stabilization()
+
+            # elif ((not self.step3.H1_success and not self.step1.success)
+            #         and (self.step3.H2_success and self.step4.success)): # H1 failed for both, H2 is fine for both
+            #     self.step1.run()
+            # elif ((self.step3.H1_success and self.step1.success)
+            #         and (not self.step3.H2_success and not self.step4.success)): # H2 failed for both, H1 is fine for both
+            #     self.step4.run()
+
+            # else:
+            #     self.initial_stabilization()"""
+            
+            # Check D stability
+            if (time.perf_counter() - tic_D_tracking)>= self.SLEEP_TIME_D:
+                self.log_event(self.log_file, "Tracking D polarization stabilization...")
+
+                self.step1.check() # Bob H1
+                while not self.step1.success:
+                    self.log_event(self.log_file, "Step 1: Failed, rerunning Step 1...")
+                    self.step1.run()
+                self.log_event(self.log_file, "Step 1: Valid")
+
+                self.step2.check() # Bob D2
+                while not self.step2.success:
+                    self.log_event(self.log_file, "Step 2: Failed, rerunning Step 2...")
+                    self.step2.run()
+                self.log_event(self.log_file, "Step 2: Valid")
+
+                self.step3.check_H1D2() # Alice H1 and D2
+                while not self.step3.success:
+                    self.log_event(self.log_file, "Step 3: Failed, rerunning Step 3...")
+                    # self.step1.check()
+                    # self.step2.check()
+                    self.step3.run(self.step1, self.step2)
+                self.log_event(self.log_file, "Step 3: Valid")
+
+                self.step4.check() # Bob H2
+                while not self.step4.success:
+                    self.log_event(self.log_file, "Step 4: Failed, rerunning Step 4...")
+                    self.step4.run()
+                self.log_event(self.log_file, "Step 4: Valid")
+                
+                # Recheck if all are still valid
+                self.log_event(self.log_file, "Rechecking D polarization steps...")
+                # self.step1.check()
+                # self.step2.check()
+                # self.step4.check()
+                # self.step3.check()
+                if (not self.step1.success or not self.step3.H1_success
+                    or not self.step3.D2_success or not self.step4.success
+                    or not self.step2.success):
+                    self.log_event(self.log_file, "One or more steps failed after checks, rerunning initial stabilization")
+                    self.initial_stabilization()
+                else:
+                    self.log_event(self.log_file, "All visibilities are below their respective thresholds"
+                                    + "\nStabilization is good for now!")
+                    
+                tic_D_tracking = time.perf_counter()
+                
+            # time.time(), Alice H1 visibility,
+
+            # Update time elapsed
             tocPS = time.perf_counter()
             time_elapsed = tocPS - ticPS
+
             self.log_event(self.log_file, f"Current time elapsed: {time_elapsed} seconds\n")
+            self.log_event(self.log_file, f"Listing visibilities:")
+            self.log_event(self.log_file,
+                           f"Time: {time_elapsed:<20}\nBob   H1 {self.step1.visibility:<20}\nBob   D2 {self.step2.visibility:<20}\nBob   H2 {self.step4.visibility:<20}\nAlice H1 {self.step3.H1_visibility:<20}\nAlice D2 {self.step3.D2_visibility:<20}\nAlice H2 {self.step3.H2_visibility:<20}\n")
+            
+            self.tracking_data[:, tracking_iter] = np.array(
+                [time_elapsed,
+                 self.step1.visibility,
+                 self.step2.visibility,
+                 self.step4.visibility,
+                 self.step3.H1_visibility,
+                 self.step3.D2_visibility,
+                 self.step3.H2_visibility]
+            )
+            tracking_iter += 1
+
         self.log_event(self.log_file, "Stabilization Tracking Completed\n")
         # delta_t = tocPS - ticPS
         # delta_t_hr = delta_t // 3600
         # delta_t_min = (delta_t % 3600) // 60
         # delta_t_sec = delta_t % 60
         # self.log_event(self.log_file, f"Total time elapsed for full stabilization tracking loop is {delta_t_hr} hours, {delta_t_min} minutes, and {delta_t_sec} seconds")
+
+    def save_tracking_data(self, filename):
+        # Find columns where all values are -1
+        mask = ~(self.tracking_data == -1).all(axis=0)
+
+        # Keep only the columns that are not completely -1
+        self.cleaned_tracking_data = self.tracking_data[:, mask]
+
+        self.log_event(self.log_file, str(self.cleaned_tracking_data))
+
+        np.savez(filename, raw_tracking_data=self.tracking_data, cleaned_tracking_data=self.cleaned_tracking_data)
+    
+    def load_tracking_data(self, filename):
+        loaded_data = np.load(filename)
+        self.tracking_data = loaded_data["raw_tracking_data"]
+        self.cleaned_tracking_data = loaded_data["cleaned_tracking_data"]
 
 if __name__ == "__main__":
     # TODO Add conditions checking Bob visibilities during steps 1 and 2 and Alice checking that Bob's visibilities are reasonable
@@ -806,7 +1000,8 @@ if __name__ == "__main__":
 
     # Initialize devices
     log_event(log_file, "##### Initializing Alice's devices #####")
-    Alice = GenericUser(name= "Alice", laser_port="COM19", PSG_port="COM12", PolCTRL_port1="COM20") # LBNL, checked!
+    Alice = GenericUser(name= "Alice", laser_port="COM19", PSG_port="COM12", PolCTRL_port1="COM20", power=6) # LBNL, checked!
+    # Alice = GenericUser(name= "Alice", laser_port="COM10", PSG_port="COM9", PolCTRL_port1="COM20", power=6) # LBNL, checked!
     Alice.laser.connect_laser()
     Alice.laser.turn_on()
     Alice.PSG.connect()
@@ -815,14 +1010,17 @@ if __name__ == "__main__":
     
     log_event(log_file, "##### Initializing Bob's devices ##### \n")
     # Bob = GenericUser(name= "Bob", laser_port="COM10", PSG_port="COM9", PolCTRL_port1="COM12") # COM4 is LUNA, COM21 is LADAQ+INQNET PolCTRL
-    Bob = GenericUser(name= "Bob", laser_port="COM10", PSG_port="COM9") # LBNL, checked!
+    Bob = GenericUser(name= "Bob", laser_port="COM10", PSG_port="COM9", power=6) # LBNL, checked!
+    # Bob = GenericUser(name= "Bob", laser_port="COM19", PSG_port="COM12", power=6) # LBNL, swapped components
     Bob.laser.connect_laser()
     Bob.PSG.connect()
     Bob.laser.turn_on()
     log_event(log_file, "##### Bob's devices are initialized #####\n")
 
     log_event(log_file, "##### Initializing Charlie's devices #####\n")
-    Charlie = GenericUser(name= "Charlie", PolCTRL_port1="COM18", PolCTRL_port2="COM17", NIDAQ_USB_id="Dev1") # LBNL, checked!
+    # Charlie = GenericUser(name= "Charlie", PolCTRL_port1="COM18", PolCTRL_port2="COM21", NIDAQ_USB_id="Dev1") # LBNL, checked!
+    Charlie = GenericUser(name= "Charlie", PolCTRL_port1="COM22", PolCTRL_port2="COM21", NIDAQ_USB_id="Dev1") # LBNL, swapped components
+    # Charlie = GenericUser(name= "Charlie", PolCTRL_port1="COM21", PolCTRL_port2="COM22", NIDAQ_USB_id="Dev1") # LBNL, swapped components
     # Charlie = GenericUser(name= "Charlie", PolCTRL_port1=None, PolCTRL_port2=None, NIDAQ_USB_id="Dev1")#, OSW_port="COM9")
     # Charlie = GenericUser(name= "Charlie", PolCTRL_port1="COM11", PolCTRL_port2="COM8", NIDAQ_USB_id="Dev1")#, OSW_port="COM9")
     # COM 8 V_2π = 0.887 V, COM 11 V_2π = 0.94 V, COM 12 V_2π = 0.752
@@ -834,33 +1032,8 @@ if __name__ == "__main__":
 
     # Define important values
     dim = 3
-    # bounds = [(0.1, 1.1)] * dim # deprecated in current PSOManager and PSOManager_v2 code
-    # Alice_bounds = [(0.01, 2.49)] * dim
-    # num_particles = 20
-    # max_iter = 20
-    threshold_cost1 = 0.005
-    threshold_cost2 = 0.01
-    threshold_cost_Alice = 0.04
-    # DAMPING = 0.01
-    channels21 = [2,1]
-    channels43 = [4,3]
-
-    # pso_params = {
-    #     'dim': dim,
-    #     'num_particles': 20,
-    #     'max_iter': 20,
-    #     'CostFunction': VisibilityCal,
-    #     'MeasureFunction': MeasureFunction,
-    #     'log_event': log_event,
-    #     'log_file': log_file,
-    #     'Alice': Alice,
-    #     'Bob': Bob,
-    #     'Charlie': Charlie,
-    #     'meas_device': Charlie.NIDAQ_USB,
-    #     'threshold_cost1': threshold_cost1,
-    #     'threshold_cost2': threshold_cost2,
-    #     'threshold_cost_Alice': threshold_cost_Alice,
-    # }
+    # TODO Needs to be generalized for multiple runs
+    # tracking_data_all_runs = {}
 
     pso_params = PSOParams(Alice, Bob, Charlie,
                            Measure_CostFunction, log_event, log_file, Charlie.NIDAQ_USB)
@@ -874,19 +1047,19 @@ if __name__ == "__main__":
     OSW_operate(OSW=None, Alice_Switch_status=1, Bob_Switch_status=0, meas_device=Charlie.NIDAQ_USB, channels=[1, 2, 3, 4], log_file=log_file, initCheck = True,
                 Alice=Alice, Bob=Bob)
     raw_Alice_power = MeasureFunction(Charlie.NIDAQ_USB, [1,2,3,4])
-    print(f"Alice raw power: {raw_Alice_power}")
+    log_event(log_file, f"Alice raw power: {raw_Alice_power}")
     Charlie.NIDAQ_USB.Alice_power = np.sum(raw_Alice_power)
-    print(f"Alice power: {Charlie.NIDAQ_USB.Alice_power}")
+    log_event(log_file, f"Alice power: {Charlie.NIDAQ_USB.Alice_power}")
 
     # Charlie.OSW.StatusSet(Charlie.OSW.Alice_Switch, 0)
     # Charlie.OSW.StatusSet(Charlie.OSW.Bob_Switch, 1)
     _, Bob_power = OSW_operate(OSW=None, Alice_Switch_status=0, Bob_Switch_status=1, meas_device=Charlie.NIDAQ_USB, channels=[1, 2, 3, 4], log_file=log_file, initCheck = True,
                 Alice=Alice, Bob=Bob)
     raw_Bob_power = MeasureFunction(Charlie.NIDAQ_USB, [1,2,3,4])
-    print(f"Bob power after switch: {Bob_power}")
-    print(f"Bob raw power: {raw_Bob_power}")
+    log_event(log_file, f"Bob power after switch: {Bob_power}")
+    log_event(log_file, f"Bob raw power: {raw_Bob_power}")
     Charlie.NIDAQ_USB.Bob_power = np.sum(raw_Bob_power)
-    print(f"Bob power: {Charlie.NIDAQ_USB.Bob_power}")
+    log_event(log_file, f"Bob power: {Charlie.NIDAQ_USB.Bob_power}")
 
     while True:
         OSW_operate(OSW=None, Alice_Switch_status=0, Bob_Switch_status=0, meas_device=Charlie.NIDAQ_USB, channels=[1, 2, 3, 4], log_file=log_file, initCheck = True,
@@ -919,6 +1092,8 @@ if __name__ == "__main__":
             delta_t_sec = delta_t % 60
             log_event(log_file, f"Total time elapsed for Run # {i+1}/{num_runs} is {delta_t_hr} hours, {delta_t_min} minutes and {delta_t_sec} seconds")
             timing[i] = delta_t
+            
+            # tracking_data_all_runs[f"[Raw Tracking Data] Run #{num_runs:<3}"] = ps.tracking_data
 
     except KeyboardInterrupt:
         log_event(log_file, "Polarization stabilization interrupted by user.")
@@ -931,7 +1106,7 @@ if __name__ == "__main__":
         delta_t_total_hr = int(delta_t_total / 3600)
         delta_t_total_min = int((delta_t_total % 3600) / 60)
         delta_t_total_sec = delta_t_total % 60
-        log_event(log_file, f"\nTotal time elapsed for all {num_runs} Runs is {delta_t_total_hr} hours, {delta_t_total_min} minutes and {delta_t_total_sec} seconds")
+        log_event(log_file, f"\nTotal time elapsed for all {num_runs} Run{run_plural} is {delta_t_total_hr} hours, {delta_t_total_min} minutes and {delta_t_total_sec} seconds")
 
         log_event(log_file, "end")
         Alice.laser.turn_off()
@@ -944,6 +1119,8 @@ if __name__ == "__main__":
         Charlie.OSW.disconnect()
         log_event(log_file, "")
         log_file.close()
+
+        ps.save_tracking_data(path + f"PSO Data/{current_date}_Polarization_Stabilization_TrackingData_{runner_idx}.npz") # Only saves last run
 
         with open(path + f"PSO Data/{current_date}_Polarization_Stabilization_AliceVisibilities_{runner_idx}.pkl", 'wb') as f_a:
             pickle.dump(Alice_visibilities_dict, f_a)

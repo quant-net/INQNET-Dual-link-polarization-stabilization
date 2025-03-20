@@ -2,27 +2,22 @@ TimeTagger:
   Channels:
     Ch1:
       ChannelID: 1
-      TriggerLevel: -0.07  # in volts
+      TriggerLevel: 0.5  # in volts
       Deadtime: 100000  # in ps
       DelayTime: 0  # in ps
     Ch2:
-      ChannelID: -2
-      TriggerLevel: -0.07  # in volts
+      ChannelID: 2
+      TriggerLevel: 0.5 # in volts
       Deadtime: 100000  # in ps
       DelayTime: 0  # in ps
     Ch3:
-      ChannelID: -3
-      TriggerLevel: -0.07  # in volts
+      ChannelID: 3
+      TriggerLevel: 0.5  # in volts
       Deadtime: 100000  # in ps
       DelayTime: 0  # in ps
-    Ch5:
-      ChannelID: -5
-      TriggerLevel: -0.07  # in volts
-      Deadtime: 100000  # in ps
-      DelayTime: 64500  # in ps
-    Clk:
-      ChannelID: -4
-      TriggerLevel: 0.4  # in volts
+    Ch4:
+      ChannelID: 4
+      TriggerLevel: 0.5  # in volts
       Deadtime: 100000  # in ps
       DelayTime: 0  # in ps
   DataAcquisitionTime: 1  # in seconds

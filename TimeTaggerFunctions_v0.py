@@ -7,8 +7,7 @@ class TimeTaggerManager:
     def __init__(self, filename=None):
         if filename != None:
             # Store the provided TimeTagger instance
-            self.Inst = TimeTagger.createTimeTaggerNetwork('10.0.0.50')  # TimeTagger instance stored in self.Inst
-            #self.Inst = TimeTagger.createTimeTagger()  # TimeTagger instance stored in self.Inst
+            self.Inst = TimeTagger.createTimeTagger()  # TimeTagger instance stored in self.Inst
             print("Time tagger is connected")
         else:
             self.Inst = None
@@ -243,33 +242,13 @@ class TimeTaggerManager:
     
     def getCoincidences(self, channel_pairs, measurement_time=1, bindwidth=1e3, n_bins=100):
         """Compute coincidences for specified channel pairs."""
-        # coincidences = []
-        # for ch1, ch2 in channel_pairs:
-        #     correlation = TimeTagger.Correlation(self.Inst, ch1, ch2, binwidth=bindwidth, n_bins=n_bins)
-        #     correlation.startFor(int(measurement_time * 1e12))
-        #     correlation.waitUntilFinished()
-        #     coincidences.append(correlation.getData())
-        # return coincidences
-        correlations = []
-        
-        # Initialize all correlation measurements
+        coincidences = []
         for ch1, ch2 in channel_pairs:
             correlation = TimeTagger.Correlation(self.Inst, ch1, ch2, binwidth=bindwidth, n_bins=n_bins)
-            correlations.append(correlation)
-        
-        # Start all measurements simultaneously
-        for correlation in correlations:
             correlation.startFor(int(measurement_time * 1e12))
-        
-        # Wait for all to finish
-        for correlation in correlations:
             correlation.waitUntilFinished()
-        
-        # Collect results
-        coincidences = [correlation.getData() for correlation in correlations]
-        
+            coincidences.append(correlation.getData())
         return coincidences
-
 
     def npSaveData(self, filenameRead=None, ShowDataTable = False):
         """Reads data from a file and saves it as a NumPy array."""
@@ -355,9 +334,7 @@ class TimeTaggerManager:
 
 if __name__ == "__main__":
     TTU = TimeTaggerManager(filename="TimeTaggerConfig.yaml")
-    while True:
-        count_list=TTU.getChannelCounts(Chlist=TTU.Chlist, measurement_time=1, printout=True)[:,0]
-        print(np.sum(count_list))
+    print(TTU.getChannelCounts(Chlist=TTU.Chlist, measurement_time=1, printout=True)[:,0])
 
     # meas_times = [0.01,]
     # for _ in range(1):

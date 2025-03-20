@@ -1,4 +1,4 @@
-import pyvisa
+# import pyvisa
 import numpy as np
 import time
 
@@ -7,7 +7,7 @@ from Support.LaserSupport.PPCL550v7 import PPCL550
 class LaserControl:
     def __init__(self, port, baud_rate=9600, min_pow=600, max_pow=1700, wavelength=1550,power=6):
         self.laser = PPCL550(port, baud_rate, min_pow=min_pow, max_pow=max_pow)
-        self.rm = pyvisa.ResourceManager()
+        # self.rm = pyvisa.ResourceManager()
         self.C = 299792458  # Speed of light in m/s
         self.wl = wavelength
         self.power = power
@@ -65,13 +65,13 @@ class LaserControl:
         except Exception as error:
             print(f"Unable to disconnect laser. Error: {error}")
 
-
 if __name__ == "__main__":
-    ports = ["COM3", "COM14"]
+    #ports = ["COM10", "COM19"]
+    ports = ["COM19",]
     for port in ports:
         laser = LaserControl(port=port)
         # laser.disconnect()
         laser.connect_laser()
         laser.turn_on(wait_time=3)
-        # laser.turn_off()
-        # laser.disconnect()
+        #laser.turn_off()
+        laser.disconnect()

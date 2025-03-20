@@ -99,8 +99,9 @@ class PSOManager:
                         particle.best_voltage = particle.voltage.copy()
 
                 if particle.cost < self.global_best_cost:
-                    self.global_best_cost, success = self.evaluate_cost(user, user_ctrl, channels, particle.voltage, self.global_best_cost)
+                    particle.cost, success = self.evaluate_cost(user, user_ctrl, channels, particle.voltage, self.global_best_cost)
                     if success:
+                        self.global_best_cost=particle.cost
                         self.global_best_voltage = particle.voltage.copy()
 
                 self.log_event(self.log_file, f"{iteration + 1:<12}{particle_no:<15}{str(particle.voltage):<25}{str(particle.measurement):<20}{particle.cost:<15.5f}{particle.best_cost:<15.5f}{self.global_best_cost:<20.5f}")
@@ -108,27 +109,30 @@ class PSOManager:
             if np.round(self.global_best_cost, 4) <= self.threshold_cost:
                 self.global_best_cost, success = self.evaluate_cost(user, user_ctrl, channels, self.global_best_voltage, self.threshold_cost)
                 if success:
-                    time.sleep(0.001)
                     self.log_event(self.log_file, f"Threshold cost achieved at iteration {iteration + 1}. Optimization stopped.")
                     break
+
+            toc = time.perf_counter()
+            
+            self.log_event(self.log_file, f"Iteration {iteration + 1}/{self.max_iter} | Best voltage: {self.global_best_voltage} | Best Cost: {self.global_best_cost}, time elapsed {toc - tic} seconds\n")
 
             for particle in self.particles:
                 particle.update_velocity(self.global_best_voltage)
                 particle.update_voltage()
             self.w *= 0.99
-            toc = time.perf_counter()
+            
 
-            self.log_event(self.log_file, f"Iteration {iteration + 1}/{self.max_iter} | Best voltage: {self.global_best_voltage} | Best Cost: {self.global_best_cost}, time elapsed {toc - tic} seconds\n")
 
         return self.global_best_voltage, self.global_best_cost
     
     def optimize_polarization(self, user, pol, channels, user_ctrl):
         success = False
         for _ in range(2):
-            self.init_particles()
+            #self.init_particles()
             user.PSG.polSET(pol)
             best_voltage, best_cost = self.optimize(user_ctrl=user_ctrl, channels=channels, user=user)
             measurement, user_pol_visibility = self.Measure_CostFunction(user, meas_device=self.meas_device, channels=channels)
+            print(f"user pol visibility: {user_pol_visibility}")
             if np.round(user_pol_visibility, 3) <= self.threshold_cost:
                 success = True
                 break

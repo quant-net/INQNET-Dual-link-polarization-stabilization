@@ -1,9 +1,9 @@
 import socket
 import time
 
-UDP_REMOTE_PORT = 55000
-UDP_LOCAL_PORT = 62689
-IP_QNODE = '10.7.0.26'  # Connected via SSH to Luna Pol control board
+UDP_REMOTE_PORT = 5005
+UDP_LOCAL_PORT = 55180
+IP_QNODE = '10.0.0.5'  # Connected via SSH to Luna Pol control board
 
 class PSGManagerBob:
     def __init__(self, ip_address=IP_QNODE, remote_port=UDP_REMOTE_PORT, local_port=UDP_LOCAL_PORT):
@@ -11,6 +11,7 @@ class PSGManagerBob:
         self.remote_port = remote_port
         self.local_port = local_port
         self.sock = None
+        self.dev = None
         self.H = "S 7\n"
         self.V = "S 5\n"
         self.D = "S 4\n"
@@ -69,9 +70,9 @@ if __name__ == "__main__":
     PSG.connect()
     
     PSG.polSET(PSG.H)
-    PSG.read_msg()
-    time.sleep(2)
-    PSG.polSET(PSG.D)
-    PSG.read_msg()
+    #PSG.read_msg()
+    #time.sleep(2)
+    #PSG.polSET(PSG.D)
+    #PSG.read_msg()
     
     PSG.disconnect()

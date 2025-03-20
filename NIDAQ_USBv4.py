@@ -9,7 +9,7 @@ import os
 
 class NIDAQ_USB:
     def __init__(self, devID=None, ai_samples=1000, ai_rate=25e3, ai_channels=4, incr=1,
-                 ao_samples=2, ao_rate=None, ao_channels=1, min_v=0, max_v=1.5):
+                 ao_samples=2, ao_rate=None, ao_channels=1, min_v=0, max_v=1.5, scale=None):
         """
         Initializes NIDAQ USB device for Analog Input (AI) and Analog Output (AO).
 
@@ -44,6 +44,7 @@ class NIDAQ_USB:
 
         self.ai_task = None
         self.ao_task = None
+        self.scale = scale
 
         self.data = {
             "AI Data": np.zeros((self.ai_channels + 1, self.ai_samples)),
@@ -223,21 +224,34 @@ class NIDAQ_USB:
 
 # Example usage (Replace with actual device parameters)
 if __name__ == "__main__":
-    device = NIDAQ_USB(devID="Dev1", ai_samples=1000, ai_rate=25000, ai_channels=4)
+    TPM = 0.25# time for each data acquisition measurement of 1000 samples (rounded up from 0.248s)
+
+    duration = 1
+    ai_samples = int(duration * (1000/TPM))
+    print(f"Number of samples: {ai_samples}")
+
+    ai_rate = 25000
+    device = NIDAQ_USB(devID="Dev1", ai_samples=ai_samples, ai_rate=ai_rate, ai_channels=4)
 
     print(device)
 
     try:
         # Synchronous Measurement
+        tic = time.perf_counter()
         device.setup_ai_task()
-        ai_data_sync = device.ai_measurement(1000)
+        ai_data_sync = device.ai_measurement(ai_samples)
+        time.sleep(duration)
         print(f"Synchronous Data:\n{ai_data_sync}")
-        device.close_task(device.ai_task)
+        # device.close_task(device.ai_task)
+        toc = time.perf_counter()
+        print(f"Time elapsed is {toc - tic} seconds")
+        device.save_data("Sync Measurement")
 
-        # Asynchronous Measurement
-        device.setup_ai_task()
-        ai_data_async = device.ai_measurement_async(duration_sec=1, buffer_size=1000, callback_interval=1000)
-        print(f"Asynchronous Data:\n{ai_data_async}")
+        # # Asynchronous Measurement
+        # device.setup_ai_task()
+        # ai_data_async = device.ai_measurement_async(duration_sec=1, buffer_size=1000, callback_interval=1000)
+        # print(f"Asynchronous Data:\n{ai_data_async}")
+        # device.save_data("Async Measurement")
 
     except Exception as e:
         print(f"An error occurred: {e}")

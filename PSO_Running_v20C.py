@@ -18,15 +18,16 @@ from PPCL_Bare_Bones import LaserControl
 from PolCTRLManager import PolCTRLManager
 from NIDAQ_USBv4 import NIDAQ_USB
 from OSWManager import OSWManager
-from GenericUser_v1 import GenericUser
+from GenericUser_v2 import GenericUser
 from PSOManager_v2 import PSOManager
 from TimeTaggerFunctions import TimeTaggerManager
+from RigolManager import RigolDG4162Manager
 
 class PSOParams:
     def __init__(self, Alice, Bob, Charlie, Measure_CostFunction, log_event, log_file, meas_device):
         self.num_particles = 20
         self.max_iter = 20
-        self.threshold_cost1 = 0.025
+        self.threshold_cost1 = 0.01
         self.threshold_cost2 = 0.01
         self.threshold_cost_Alice = 0.04
         self.channels12 = [1, 2]
@@ -38,21 +39,25 @@ class PSOParams:
         self.Alice = Alice
         self.Bob = Bob
         self.Charlie = Charlie
-        self.visTolPercent = 0.015
+        self.visTol = 0.015
 
 def OSW_operate(OSW, Alice_Switch_status, Bob_Switch_status, meas_device, channels, log_file, initCheck = False,
                 Alice=None, Bob=None):
     success = False
+    # OSW.control_channel(1, "OFF")
+    # OSW.control_channel(2, "OFF")
     while True:
         if Alice_Switch_status==0:
-            Alice.laser.turn_off()
+            OSW.control_channel(1, "OFF")
         elif Alice_Switch_status==1: 
-            Alice.laser.turn_on(10)
+            OSW.configure_channel(**OSW.ch1_params)
+            OSW.control_channel(1, "ON")
         
         if Bob_Switch_status==0:
-            Bob.laser.turn_off()
+            OSW.control_channel(2, "OFF")
         elif Bob_Switch_status==1:
-            Bob.laser.turn_on(10)
+            OSW.configure_channel(**OSW.ch2_params)
+            OSW.control_channel(2, "ON")
             
         # OSW.StatusSet(OSW.Alice_Switch, Alice_Switch_status)
         # OSW.StatusSet(OSW.Bob_Switch, Bob_Switch_status)
@@ -70,9 +75,9 @@ def OSW_operate(OSW, Alice_Switch_status, Bob_Switch_status, meas_device, channe
             else:
                 reference_power = meas_device.Alice_power + meas_device.Bob_power
             
-            if abs(power_check / reference_power - 1) < 0.2:
-                    success = True
-                    break
+            if True:#abs(power_check / reference_power - 1) < 0.2: # TODO Most likely need to change this tolerance here
+                success = True
+                break
     return success, power_check
 
 def log_event(log_file, message, log=True):
@@ -97,49 +102,53 @@ def Measure_CostFunction(user, meas_device, channels):
         cost = VisibilityCal(measurement)
     return measurement, cost
 
-# Synchronous Analog Input Measurement Function
-def MeasureFunctionSync(meas_device, channels): 
-    # Each measurement takes around 0.062 s using setup and close, around 0.059 s without
-    tic = time.perf_counter()
-    meas_device.setup_ai_task()
-    data = meas_device.ai_measurement(samples=meas_device.ai_samples)
-    mean_data = np.mean(data, axis=1)
-    meas_device.close_all_tasks()
-    toc = time.perf_counter()
-    # log_event(log_file, f"Time for measurement was {toc - tic} seconds")
-    # log_event(log_file, f"mea:{mean_data}")
-    # Adjust channels from 1-based to 0-based and return only the requested channels
-    return mean_data[channels]
+# TimeTagger Measure Function
+def MeasureFunction(meas_device, channels, measurement_time=0.01):
+    return meas_device.getChannelCountRate(channels, measurement_time=measurement_time)
 
-# Asynchronous Analog Input Measurement Function
-def MeasureFunctionAsync(meas_device, channels): 
-    # Each measurement takes around 0.062 s using setup and close, around 0.059 s without
-    # tic = time.perf_counter()
-    meas_device.setup_ai_task()
-    ai_duration = np.round(meas_device.ai_samples/meas_device.ai_rate, 2)
-    data = meas_device.ai_measurement_async(
-        duration_sec=ai_duration,
-        buffer_size=1000, # this is never used
-        callback_interval=meas_device.ai_samples # number of samples per measurement (?)
-        )
-    mean_data = np.mean(data, axis=1)
-    meas_device.close_all_tasks()
-    # toc = time.perf_counter()
-    # log_event(log_file, f"Time for measurement was {toc - tic} seconds")
-    # log_event(log_file, f"mea:{mean_data}")
-    # Adjust channels from 1-based to 0-based and return only the requested channels
-    return mean_data[channels]
+# # Synchronous Analog Input Measurement Function
+# def MeasureFunctionSync(meas_device, channels): 
+#     # Each measurement takes around 0.062 s using setup and close, around 0.059 s without
+#     tic = time.perf_counter()
+#     meas_device.setup_ai_task()
+#     data = meas_device.ai_measurement(samples=meas_device.ai_samples)
+#     mean_data = np.mean(data, axis=1)
+#     meas_device.close_all_tasks()
+#     toc = time.perf_counter()
+#     # log_event(log_file, f"Time for measurement was {toc - tic} seconds")
+#     # log_event(log_file, f"mea:{mean_data}")
+#     # Adjust channels from 1-based to 0-based and return only the requested channels
+#     return mean_data[channels]
 
-# NIDAQ Measurement Function with either Sync or Async Modes
-def MeasureFunction(meas_device, channels, sync=True):
-    if sync:
-        channel_data = MeasureFunctionSync(meas_device, channels)
-    else:
-        channel_data = MeasureFunctionAsync(meas_device, channels)
+# # Asynchronous Analog Input Measurement Function
+# def MeasureFunctionAsync(meas_device, channels): 
+#     # Each measurement takes around 0.062 s using setup and close, around 0.059 s without
+#     # tic = time.perf_counter()
+#     meas_device.setup_ai_task()
+#     ai_duration = np.round(meas_device.ai_samples/meas_device.ai_rate, 2)
+#     data = meas_device.ai_measurement_async(
+#         duration_sec=ai_duration,
+#         buffer_size=1000, # this is never used
+#         callback_interval=meas_device.ai_samples # number of samples per measurement (?)
+#         )
+#     mean_data = np.mean(data, axis=1)
+#     meas_device.close_all_tasks()
+#     # toc = time.perf_counter()
+#     # log_event(log_file, f"Time for measurement was {toc - tic} seconds")
+#     # log_event(log_file, f"mea:{mean_data}")
+#     # Adjust channels from 1-based to 0-based and return only the requested channels
+#     return mean_data[channels]
+
+# # NIDAQ Measurement Function with either Sync or Async Modes
+# def MeasureFunction(meas_device, channels, sync=True):
+#     if sync:
+#         channel_data = MeasureFunctionSync(meas_device, channels)
+#     else:
+#         channel_data = MeasureFunctionAsync(meas_device, channels)
     
-    return channel_data
+#     return channel_data
 
-def VisibilityCal(channels):
+def VisibilityCal(channels): # TODO Maybe add a way to normalize with respect to Alice/Bob zero power?
     return channels[1]/channels[0]
 
 def calculate_average_visibility(device, channels, log_file, controller=None, voltage=None, num_measurements=10):
@@ -208,7 +217,7 @@ class Step:
             self.log_file = pso_params.log_file
             self.log_event = pso_params.log_event
             self.meas_device = pso_params.meas_device
-            self.visTolPercent = pso_params.visTolPercent # percentage away from threshold_cost that checks how badly stabilization fails
+            self.visTol = pso_params.visTol # percentage away from threshold_cost that checks how badly stabilization fails
         else:
             raise ValueError(f"pso_params was passed as {type(pso_params)}, accepted types are dict and PSOParams only")
         
@@ -244,7 +253,7 @@ class Bob_H1_Stabilization(Step):
         self.Bob.PSG.polSET(self.Bob.PSG.H)
 
         _ = OSW_operate(
-            self.Charlie.OSW,
+            self.Charlie.Rigol,
             Alice_Switch_status=0,
             Bob_Switch_status=1,
             meas_device=self.meas_device,
@@ -255,7 +264,7 @@ class Bob_H1_Stabilization(Step):
         )
         
         Bob_H1_avg_visibility = calculate_average_visibility(
-            device=self.Charlie.NIDAQ_USB,
+            device=self.meas_device,
             channels=self.channels12,
             log_file=self.log_file,
             controller=self.Charlie.Pol_CTRL1,
@@ -269,7 +278,7 @@ class Bob_H1_Stabilization(Step):
             self.success = True
         else:
             self.success = False
-            if Bob_H1_avg_visibility <= (1 + self.visTolPercent) * self.threshold_cost1:
+            if Bob_H1_avg_visibility <= (1 + self.visTol) * self.threshold_cost1:
                 self.failed_badly = False
             else:
                 self.failed_badly = True
@@ -290,11 +299,11 @@ class Bob_H1_Stabilization(Step):
         # self.Bob.PSG.polSET(self.Bob.PSG.H)
         
         _ = OSW_operate(
-            self.Charlie.OSW,
+            self.Charlie.Rigol,
             Alice_Switch_status=0,
             Bob_Switch_status=1,
             meas_device=self.meas_device,
-            channels=[1, 2, 3, 4],
+            channels=[1, 2, 3, 4], # TODO Need to check channels for TimeTaggerManager (is 6 given as 2 or 6?)
             log_file=self.log_file,
             Alice=self.Alice,
             Bob = self.Bob
@@ -326,7 +335,7 @@ class Bob_D2_Stabilization(Step):
         self.Bob.PSG.polSET(self.Bob.PSG.D)
 
         _ = OSW_operate(
-            self.Charlie.OSW,
+            self.Charlie.Rigol,
             Alice_Switch_status=0,
             Bob_Switch_status=1,
             meas_device=self.meas_device,
@@ -337,7 +346,7 @@ class Bob_D2_Stabilization(Step):
         )
 
         Bob_D2_avg_visibility = calculate_average_visibility(
-            device=self.Charlie.NIDAQ_USB,
+            device=self.meas_device,
             channels=self.channels34,
             log_file=self.log_file,
             controller=self.Charlie.Pol_CTRL2,
@@ -350,7 +359,7 @@ class Bob_D2_Stabilization(Step):
             self.success = True
         else:
             self.success = False
-            if Bob_D2_avg_visibility <= (1 + self.visTolPercent) * self.threshold_cost2:
+            if Bob_D2_avg_visibility <= (1 + self.visTol) * self.threshold_cost2:
                 self.failed_badly = False
             else:
                 self.failed_badly = True
@@ -367,7 +376,7 @@ class Bob_D2_Stabilization(Step):
         self.log_event(self.log_file, "Setting D polarization from Bob's PSG")
         
         _ = OSW_operate(
-            self.Charlie.OSW,
+            self.Charlie.Rigol,
             Alice_Switch_status=0,
             Bob_Switch_status=1,
             meas_device=self.meas_device,
@@ -404,7 +413,7 @@ class Alice_H1D2_Stabilization(Step):
         self.Alice.PSG.polSET(self.Alice.PSG.H)
         
         _ = OSW_operate(
-            self.Charlie.OSW,
+            self.Charlie.Rigol,
             Alice_Switch_status=1,
             Bob_Switch_status=0,
             meas_device=self.meas_device,
@@ -451,7 +460,7 @@ class Alice_H1D2_Stabilization(Step):
             self.H1_failed_badly = False
         else:
             self.H1_success = False
-            if self.H1_visibility <= (1 + self.visTolPercent) * self.threshold_cost_Alice:
+            if self.H1_visibility <= (1 + self.visTol) * self.threshold_cost_Alice:
                 self.H1_failed_badly = False
             else:
                 self.H1_failed_badly = True
@@ -461,7 +470,7 @@ class Alice_H1D2_Stabilization(Step):
             self.D2_failed_badly = False
         else:
             self.D2_success = False
-            if self.D2_visibility <= (1 + self.visTolPercent) * self.threshold_cost_Alice:
+            if self.D2_visibility <= (1 + self.visTol) * self.threshold_cost_Alice:
                 self.D2_failed_badly = False
             else:
                 self.D2_failed_badly = True
@@ -479,7 +488,7 @@ class Alice_H1D2_Stabilization(Step):
         self.Alice.PSG.polSET(self.Alice.PSG.H)
         
         _ = OSW_operate(
-            self.Charlie.OSW,
+            self.Charlie.Rigol,
             Alice_Switch_status=1,
             Bob_Switch_status=0,
             meas_device=self.meas_device,
@@ -526,7 +535,7 @@ class Alice_H1D2_Stabilization(Step):
             self.H1_failed_badly = False
         else:
             self.H1_success = False
-            if self.H1_visibility <= (1 + self.visTolPercent) * self.threshold_cost_Alice:
+            if self.H1_visibility <= (1 + self.visTol) * self.threshold_cost_Alice:
                 self.H1_failed_badly = False
             else:
                 self.H1_failed_badly = True
@@ -536,7 +545,7 @@ class Alice_H1D2_Stabilization(Step):
             self.H2_failed_badly = False
         else:
             self.H2_success = False
-            if self.H2_visibility <= (1 + self.visTolPercent) * self.threshold_cost_Alice:
+            if self.H2_visibility <= (1 + self.visTol) * self.threshold_cost_Alice:
                 self.H2_failed_badly = False
             else:
                 self.H2_failed_badly = True
@@ -561,7 +570,7 @@ class Alice_H1D2_Stabilization(Step):
         while num_tries < MAX_TRIES and not all_succeeded:
             num_tries += 1
             _ = OSW_operate(
-                self.Charlie.OSW,
+                self.Charlie.Rigol,
                 Alice_Switch_status=1,
                 Bob_Switch_status=0,
                 meas_device=self.meas_device,
@@ -620,7 +629,7 @@ class Bob_H2_Stabilization(Step):
         self.Bob.PSG.polSET(self.Bob.PSG.H)
 
         _ = OSW_operate(
-            self.Charlie.OSW,
+            self.Charlie.Rigol,
             Alice_Switch_status=0,
             Bob_Switch_status=1,
             meas_device=self.meas_device,
@@ -644,7 +653,7 @@ class Bob_H2_Stabilization(Step):
             self.success = True
         else:
             self.success = False
-            if Bob_H2_avg_visibility <= (1 + self.visTolPercent) * self.threshold_cost2:
+            if Bob_H2_avg_visibility <= (1 + self.visTol) * self.threshold_cost2:
                 self.failed_badly = False
             else:
                 self.failed_badly = True
@@ -662,7 +671,7 @@ class Bob_H2_Stabilization(Step):
         # self.Bob.PSG.polSET(self.Bob.PSG.H)
         
         _ = OSW_operate(
-            self.Charlie.OSW,
+            self.Charlie.Rigol,
             Alice_Switch_status=0,
             Bob_Switch_status=1,
             meas_device=self.meas_device,
@@ -692,7 +701,7 @@ class Bob_H2_Stabilization(Step):
         self.log_event(self.log_file, f"{self.name} Completed Successfully")
 
 class PolarizationStabilization:
-    def __init__(self, pso_params, duration, tracking_interval=30, visTolPercent=0.015):
+    def __init__(self, pso_params, duration, tracking_interval=30, visTol=0.015):
 
         self.step1 = Bob_H1_Stabilization("Step 1", pso_params)
         self.step2 = Bob_D2_Stabilization("Step 2", pso_params)
@@ -705,7 +714,7 @@ class PolarizationStabilization:
         self.log_event = self.pso_params.log_event
 
         self.tracking_check_interval = tracking_interval
-        self.visTolPercent = visTolPercent
+        self.visTol = visTol
     
     def initial_stabilization(self):
         # NOTE Step.run() does not check whether self.failed_badly is True or False when self.success = False,
@@ -736,13 +745,13 @@ class PolarizationStabilization:
                 
             elif ((not self.step3.H1_success and not self.step3.H2_success)
                   and (self.step1.success and self.step4.success)): # Alice failed and Bob did not
-                # if not self.step3.H1_failed_badly and not self.step3.H2_failed_badly: # Alice H1 and H2 are still within visTolPercent of threshold_cost
+                # if not self.step3.H1_failed_badly and not self.step3.H2_failed_badly: # Alice H1 and H2 are still within visTol of threshold_cost
                 #     self.step3.run(self.step1, self.step2)
                 # else:
                 self.initial_stabilization()
             elif ((self.step3.H1_success and self.step3.H2_success)
                   and (not self.step1.success and not self.step4.success)): # Bob failed and Alice did not
-                # if not self.step1.failed_badly and not self.step4.failed_badly: # Bob H1 and H2 are still within visTolPercent of threshold_cost
+                # if not self.step1.failed_badly and not self.step4.failed_badly: # Bob H1 and H2 are still within visTol of threshold_cost
                 #     self.step1.run()
                 #     self.step4.run()
                 # else: # If Bob H1 or H2 failed badly
@@ -773,7 +782,7 @@ if __name__ == "__main__":
     # TODO Add conditions checking Bob visibilities during steps 1 and 2 and Alice checking that Bob's visibilities are reasonable
 
     num_runs = 1 # it can take around 10-25 minutes to run
-    duration = 30 * 60 # amount of time to run the stabilization algorithm for
+    duration = 15 * 60 # amount of time to run the stabilization algorithm for
 
     # Define Alice and Bob visibilities dictionaries to save to .pkl files later
     Alice_visibilities_dict = {}
@@ -783,12 +792,16 @@ if __name__ == "__main__":
 
     # Create log file with unique name
     current_date = datetime.now().strftime("%Y-%m-%d")
-    path = "C:/Users/QUANT-NET Admin/Documents/Python codes/QUANTNET/INQNET_DLPolarizationStabilization_Main/"
+    path = "C:/Users/QUANT-NET Admin/Documents/Python codes/QUANTNET/INQNET_DLPolarizationStabilization_Main"
     runner_idx = 1
     os.makedirs(path + "PSO Data", exist_ok=True)
     while os.path.exists(path + f"PSO Data/{current_date}_Polarization_Stabilization_PSO_log_{runner_idx}.txt"):
         runner_idx += 1
     log_filename = path + f"PSO Data/{current_date}_Polarization_Stabilization_PSO_log_{runner_idx}.txt"
+
+    # Important device resources
+    # Rigol_resource = "USB0::0x1AB1::0x0641::DG4D152500730::INSTR"
+    Rigol_resource = "USB0::0x1AB1::0x0641::DG4E251600982::INSTR"
 
     log_file = open(log_filename, 'w')
     message = f"Particle Swarm Optimization Polarization Stabilization Test {runner_idx}, {current_date} step-by-step log" # message should not be larger than 116 characters
@@ -796,17 +809,15 @@ if __name__ == "__main__":
     # notes = "(Clipping at the boundaries)"
     notes = "(Clipping at the boundaries and resetting a particle's velocity and voltage to a random value"
     notes2 = "if it hits the boundary)"
-    notes3 = "Bob is going down to UCB (Fiber 8) and back up (Fiber 7) the mountain to LBNL"
     log_event(log_file, "[" + "=" * 118 + "]")
     format_title(log_file, message)
     format_title(log_file, notes)
     format_title(log_file, notes2)
-    format_title(log_file, notes3)
     log_event(log_file, "[" + "=" * 118 + "]\n")
 
     # Initialize devices
     log_event(log_file, "##### Initializing Alice's devices #####")
-    Alice = GenericUser(name= "Alice", laser_port="COM19", PSG_port="COM12", PolCTRL_port1="COM20") # LBNL, checked!
+    Alice = GenericUser(name= "Alice", laser_port="COM16", PSG_port="COM12", PolCTRL_port1=None) # LBNL
     Alice.laser.connect_laser()
     Alice.laser.turn_on()
     Alice.PSG.connect()
@@ -815,19 +826,25 @@ if __name__ == "__main__":
     
     log_event(log_file, "##### Initializing Bob's devices ##### \n")
     # Bob = GenericUser(name= "Bob", laser_port="COM10", PSG_port="COM9", PolCTRL_port1="COM12") # COM4 is LUNA, COM21 is LADAQ+INQNET PolCTRL
-    Bob = GenericUser(name= "Bob", laser_port="COM10", PSG_port="COM9") # LBNL, checked!
+    Bob = GenericUser(name= "Bob", laser_port="COM10", PSG_port="COM9") # LBNL
     Bob.laser.connect_laser()
     Bob.PSG.connect()
     Bob.laser.turn_on()
     log_event(log_file, "##### Bob's devices are initialized #####\n")
 
     log_event(log_file, "##### Initializing Charlie's devices #####\n")
-    Charlie = GenericUser(name= "Charlie", PolCTRL_port1="COM18", PolCTRL_port2="COM17", NIDAQ_USB_id="Dev1") # LBNL, checked!
+    Charlie = GenericUser(name= "Charlie", PolCTRL_port1="COM18", PolCTRL_port2="COM17",
+                          NIDAQ_USB_id="Dev1", time_tagger_filename="TimeTaggerConfig.yaml",
+                          Rigol_resource=Rigol_resource) # LBNL
+    # Rigol channel params
+    ch1_params = Charlie.Rigol.set_channel_params(channel="1", burst_delay=47E-6, trigger_source="INT")
+    ch2_params = Charlie.Rigol.set_channel_params(channel="2", burst_delay=0, trigger_source="INT")
     # Charlie = GenericUser(name= "Charlie", PolCTRL_port1=None, PolCTRL_port2=None, NIDAQ_USB_id="Dev1")#, OSW_port="COM9")
     # Charlie = GenericUser(name= "Charlie", PolCTRL_port1="COM11", PolCTRL_port2="COM8", NIDAQ_USB_id="Dev1")#, OSW_port="COM9")
     # COM 8 V_2π = 0.887 V, COM 11 V_2π = 0.94 V, COM 12 V_2π = 0.752
     Charlie.Pol_CTRL1.connect()
     Charlie.Pol_CTRL2.connect()
+    Charlie.Rigol.connect()
     # Charlie.OSW.connect()
     # Charlie.NIDAQ_USB.setup_ai_task()
     log_event(log_file, "##### Charlie's devices are initialized #####\n")
@@ -863,7 +880,7 @@ if __name__ == "__main__":
     # }
 
     pso_params = PSOParams(Alice, Bob, Charlie,
-                           Measure_CostFunction, log_event, log_file, Charlie.NIDAQ_USB)
+                           Measure_CostFunction, log_event, log_file, Charlie.TimeTaggerManager)
 
     ### Default OSW connetion
     Charlie.OSW.Alice_Switch = 0
@@ -871,32 +888,33 @@ if __name__ == "__main__":
 
     # Charlie.OSW.StatusSet(Charlie.OSW.Alice_Switch, 1)
     # Charlie.OSW.StatusSet(Charlie.OSW.Bob_Switch, 0)
-    OSW_operate(OSW=None, Alice_Switch_status=1, Bob_Switch_status=0, meas_device=Charlie.NIDAQ_USB, channels=[1, 2, 3, 4], log_file=log_file, initCheck = True,
+    OSW_operate(OSW=Charlie.Rigol, Alice_Switch_status=1, Bob_Switch_status=0, meas_device=Charlie.TimeTaggerManager, channels=[1, 2, 3, 4], log_file=log_file, initCheck = True,
                 Alice=Alice, Bob=Bob)
-    raw_Alice_power = MeasureFunction(Charlie.NIDAQ_USB, [1,2,3,4])
+    raw_Alice_power = MeasureFunction(Charlie.TimeTaggerManager, [1,2,3,4])
     print(f"Alice raw power: {raw_Alice_power}")
-    Charlie.NIDAQ_USB.Alice_power = np.sum(raw_Alice_power)
-    print(f"Alice power: {Charlie.NIDAQ_USB.Alice_power}")
+    Charlie.TimeTaggerManager.Alice_power = np.sum(raw_Alice_power)
+    print(f"Alice power: {Charlie.TimeTaggerManager.Alice_power}")
 
     # Charlie.OSW.StatusSet(Charlie.OSW.Alice_Switch, 0)
     # Charlie.OSW.StatusSet(Charlie.OSW.Bob_Switch, 1)
-    _, Bob_power = OSW_operate(OSW=None, Alice_Switch_status=0, Bob_Switch_status=1, meas_device=Charlie.NIDAQ_USB, channels=[1, 2, 3, 4], log_file=log_file, initCheck = True,
+    _, Bob_power = OSW_operate(OSW=Charlie.Rigol, Alice_Switch_status=0, Bob_Switch_status=1, meas_device=Charlie.TimeTaggerManager, channels=[1, 2, 3, 4], log_file=log_file, initCheck = True,
                 Alice=Alice, Bob=Bob)
-    raw_Bob_power = MeasureFunction(Charlie.NIDAQ_USB, [1,2,3,4])
+    raw_Bob_power = MeasureFunction(Charlie.TimeTaggerManager, [1,2,3,4])
     print(f"Bob power after switch: {Bob_power}")
     print(f"Bob raw power: {raw_Bob_power}")
-    Charlie.NIDAQ_USB.Bob_power = np.sum(raw_Bob_power)
-    print(f"Bob power: {Charlie.NIDAQ_USB.Bob_power}")
+    Charlie.TimeTaggerManager.Bob_power = np.sum(raw_Bob_power)
+    print(f"Bob power: {Charlie.TimeTaggerManager.Bob_power}")
 
     while True:
-        OSW_operate(OSW=None, Alice_Switch_status=0, Bob_Switch_status=0, meas_device=Charlie.NIDAQ_USB, channels=[1, 2, 3, 4], log_file=log_file, initCheck = True,
+        OSW_operate(OSW=Charlie.Rigol, Alice_Switch_status=0, Bob_Switch_status=0, meas_device=Charlie.TimeTaggerManager, channels=[1, 2, 3, 4], log_file=log_file, initCheck = True,
                     Alice=Alice, Bob=Bob)
-        raw_zero_power = MeasureFunction(Charlie.NIDAQ_USB, [1,2,3,4])
+        raw_zero_power = MeasureFunction(Charlie.TimeTaggerManager, [1,2,3,4])
         print(f"Raw zero power: {raw_zero_power}")
-        Charlie.NIDAQ_USB.zero_power = raw_zero_power
-        log_event(log_file, f"measure zero power: {Charlie.NIDAQ_USB.zero_power}") 
-        if np.mean(Charlie.NIDAQ_USB.zero_power)<0.01:
-            break
+        Charlie.TimeTaggerManager.zero_power = raw_zero_power
+        log_event(log_file, f"measure zero power: {Charlie.TimeTaggerManager.zero_power}")
+        break # Remove after adding condition below
+        # if np.mean(Charlie.TimeTaggerManager.zero_power)<0.01:
+        #     break
 
     try:
         tic_total = time.perf_counter()

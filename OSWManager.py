@@ -3,7 +3,7 @@ import serial
 from NIDAQ_USBv4 import NIDAQ_USB
 import numpy as np
 import matplotlib.pyplot as plt
-from ThorlabsPMFunctions import PowerMeter
+# from ThorlabsPMFunctions import PowerMeter
 
 class OSWManager:
     def __init__(self, com_port,baudrate=9600, timeout=0.5):
